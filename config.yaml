@@ -1,0 +1,7 @@
+application: neural_fields
+image: 'images/dog_1024x1024.jpg'
+mode: 'RGB' # RGB / GRAYSCALE
+network:
+  num_hidden_layers: 3
+  hidden_layer_size: 256
+save_weights: True

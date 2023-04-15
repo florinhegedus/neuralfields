@@ -14,7 +14,7 @@ class NeuralNet(nn.Module):
         self.layers.append(nn.ReLU())
 
         # Hidden layers
-        for i in range(num_hidden_layers):
+        for _ in range(num_hidden_layers):
             self.layers.append(nn.Linear(hidden_layer_size, hidden_layer_size))
             self.layers.append(nn.ReLU())
 

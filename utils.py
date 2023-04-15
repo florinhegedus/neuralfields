@@ -34,22 +34,16 @@ def get_device(verbose: bool=True) -> torch.device:
     return device
 
 
-def reconstruct_image(width: int, height: int, net: NeuralNet, device: torch.device):
+def reconstruct_image(size: int, net: NeuralNet, device: torch.device, mode: str):
     # Build coordinates matrix
-    coordinates = []
-    for i in range(width):
-        for j in range(height):
-            X = torch.tensor([i/width, j/height], dtype=torch.float, device=device)
-            coordinates.append(X)
+    coordinates = get_mgrid(size, 2, device)
 
-    # Get predicted pixel values
-    coordinates = torch.cat(coordinates).view(-1, 2).to(device)
+    # Get predictions
     y = net(coordinates)
-    y = y * 256
+    y = y.view(-1, size, size)
 
     # torch.tensor to PIL image
-    image_numpy = np.array(y.view(width, height).detach().cpu())
-    img = Image.fromarray(image_numpy.astype(np.uint8), 'L')
+    img = torchvision.transforms.functional.to_pil_image(y, mode)
 
     # Save image
     now = datetime.now() # current date and time
@@ -58,31 +52,42 @@ def reconstruct_image(width: int, height: int, net: NeuralNet, device: torch.dev
 
 
 
-def read_image(path: str) -> torch.Tensor:
-    image = torchvision.io.read_image(path, mode=torchvision.io.ImageReadMode.GRAY)
+def read_image(path: str, mode: str) -> torch.Tensor:
+    if mode == 'RGB':
+        image = torchvision.io.read_image(path, mode=torchvision.io.ImageReadMode.RGB)
+    else:
+        image = torchvision.io.read_image(path, mode=torchvision.io.ImageReadMode.GRAY)
     return image
 
 
+def get_mgrid(sidelen, dim, device):
+    '''Generates a flattened grid of (x,y,...) coordinates in a range of -1 to 1.
+    sidelen: int
+    dim: int'''
+    tensors = tuple(dim * [torch.linspace(-1, 1, steps=sidelen)])
+    mgrid = torch.stack(torch.meshgrid(*tensors), dim=-1)
+    mgrid = mgrid.reshape(-1, dim)
+    mgrid = mgrid.to(device)
+    return mgrid
+
+
 def build_dataset_from_image(image: torch.Tensor, device: torch.device)-> Tuple[torch.Tensor, torch.Tensor]:
+    # Get pixel values
     C, W, H = image.shape
     image = torch.reshape(image, (W, H, C))
+    image = image / 255
+    pixel_values = image.view(-1, C)
 
-    coordinates = []
-    rgb_values = []
+    # Get coordinates
+    assert W == H, "Width and height of the input image must be the same."
+    coordinates = get_mgrid(W, 2, device)
 
-    for i in range(W):
-        for j in range(H):
-            X = torch.tensor([i/W, j/H], dtype=torch.float)
-            y = image[i, j] / 256.0
-            coordinates.append(X)
-            rgb_values.append(y)
-
-    coordinates = torch.cat(coordinates).view(-1, 2).to(device)
-    rgb_values = torch.cat(rgb_values).view(-1, C).to(device)
-    return coordinates, rgb_values
+    pixel_values = pixel_values.to(device)
+    
+    return coordinates, pixel_values
 
 
-def create_batches(coordinates: torch.Tensor, rgb_values: torch.Tensor, batch_size: int)-> List[BatchData]:
+def create_batches(coordinates: torch.Tensor, pixel_values: torch.Tensor, batch_size: int)-> List[BatchData]:
     no_of_pixels = coordinates.shape[0]
     no_of_batches = int(no_of_pixels / batch_size)
 
@@ -91,16 +96,16 @@ def create_batches(coordinates: torch.Tensor, rgb_values: torch.Tensor, batch_si
     
     # Shuffle the coordinates and the RGB values
     coordinates = coordinates[indices]
-    rgb_values = rgb_values[indices]
+    pixel_values = pixel_values[indices]
 
     # Create batches
     coordinates = coordinates.view(-1, batch_size, 2)
-    C = rgb_values.shape[-1]
-    rgb_values = rgb_values.view(-1, batch_size, C)
+    C = pixel_values.shape[-1]
+    pixel_values = pixel_values.view(-1, batch_size, C)
 
     batches = []
     for i in range(no_of_batches):
-        batch = BatchData(coordinates[i], rgb_values[i])
+        batch = BatchData(coordinates[i], pixel_values[i])
         batches.append(batch)
 
     return batches
