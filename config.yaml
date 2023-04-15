@@ -1,7 +1,12 @@
 application: neural_fields
-image: 'images/dog_1024x1024.jpg'
-mode: 'RGB' # RGB / GRAYSCALE
+image: 'images/arcane_1024x1024.png'
+mode: 'RGB' # RGB / L
+batch_size: 256
+num_epochs: 100
+positional_encoding: True
+num_frequencies: 10
 network:
   num_hidden_layers: 3
   hidden_layer_size: 256
 save_weights: True
+reconstruction_resolution: 1024

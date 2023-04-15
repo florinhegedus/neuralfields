@@ -3,9 +3,10 @@ import torchvision
 from typing import List, Tuple
 from dataclasses import dataclass
 from nn import NeuralNet
-import numpy as np
-from PIL import Image
 from datetime import datetime
+import time
+import numpy as np
+import torch.nn as nn
 
 
 @dataclass
@@ -34,11 +35,18 @@ def get_device(verbose: bool=True) -> torch.device:
     return device
 
 
-def reconstruct_image(size: int, net: NeuralNet, device: torch.device, mode: str):
+def reconstruct_image(size: int, net: NeuralNet, mode: str, positional_encoding: bool, num_frequencies: int):
+    '''
+        Reconstruction will be calculated on the CPU due to high GPU memory usage
+    '''
     # Build coordinates matrix
-    coordinates = get_mgrid(size, 2, device)
+    coordinates = get_mgrid(size, 2)
+    coordinates = coordinates.to('cpu')
+    if positional_encoding:
+        coordinates = positional_encode(coordinates, num_frequencies)
 
     # Get predictions
+    net = net.to('cpu')
     y = net(coordinates)
     y = y.view(-1, size, size)
 
@@ -60,14 +68,13 @@ def read_image(path: str, mode: str) -> torch.Tensor:
     return image
 
 
-def get_mgrid(sidelen, dim, device):
+def get_mgrid(sidelen, dim):
     '''Generates a flattened grid of (x,y,...) coordinates in a range of -1 to 1.
     sidelen: int
     dim: int'''
     tensors = tuple(dim * [torch.linspace(-1, 1, steps=sidelen)])
     mgrid = torch.stack(torch.meshgrid(*tensors), dim=-1)
     mgrid = mgrid.reshape(-1, dim)
-    mgrid = mgrid.to(device)
     return mgrid
 
 
@@ -80,11 +87,22 @@ def build_dataset_from_image(image: torch.Tensor, device: torch.device)-> Tuple[
 
     # Get coordinates
     assert W == H, "Width and height of the input image must be the same."
-    coordinates = get_mgrid(W, 2, device)
+    coordinates = get_mgrid(W, 2)
 
+    coordinates = coordinates.to(device)
     pixel_values = pixel_values.to(device)
     
     return coordinates, pixel_values
+
+
+def positional_encode(coordinates: torch.Tensor, num_frequencies: int)-> torch.Tensor:
+    num_coordinates = coordinates.shape[-1]
+    for idx in range(num_coordinates):
+        for i in range(num_frequencies):
+            sin = torch.unsqueeze(torch.sin((2 ** i) * np.pi * coordinates[:, idx]), -1)
+            cos = torch.unsqueeze(torch.cos((2 ** i) * np.pi * coordinates[:, idx]), -1)
+            coordinates = torch.cat((coordinates, sin, cos), axis=-1)
+    return coordinates
 
 
 def create_batches(coordinates: torch.Tensor, pixel_values: torch.Tensor, batch_size: int)-> List[BatchData]:
@@ -99,7 +117,8 @@ def create_batches(coordinates: torch.Tensor, pixel_values: torch.Tensor, batch_
     pixel_values = pixel_values[indices]
 
     # Create batches
-    coordinates = coordinates.view(-1, batch_size, 2)
+    num_features = coordinates.shape[-1]
+    coordinates = coordinates.view(-1, batch_size, num_features)
     C = pixel_values.shape[-1]
     pixel_values = pixel_values.view(-1, batch_size, C)
 
@@ -109,3 +128,33 @@ def create_batches(coordinates: torch.Tensor, pixel_values: torch.Tensor, batch_
         batches.append(batch)
 
     return batches
+
+
+def train(net, coordinates, pixel_values, epochs, batch_size):
+    # Optimizers specified in the torch.optim package
+    optimizer = torch.optim.SGD(net.parameters(), lr=0.01, momentum=0.9) 
+
+    # Loss function
+    loss_fun = nn.L1Loss()
+
+    start = time.time()
+    for epoch in range(epochs):
+        batches = create_batches(coordinates, pixel_values, batch_size)
+        epoch_loss = 0.0
+        for batch in batches:
+            inputs = batch.coordinates
+            targets = batch.rgb_values
+
+            preds = net(inputs)
+
+            optimizer.zero_grad()
+            loss = loss_fun(preds, targets)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+
+        print(f"Epoch {epoch}: loss={epoch_loss}")
+
+    
+    end = time.time()
+    print(f"Training took: {end - start}s.")

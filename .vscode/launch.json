@@ -12,8 +12,7 @@
             "console": "integratedTerminal",
             "justMyCode": false,
             "args": [
-                "images/dog_1024x1024.png",
-                "RGB"
+                "config.yaml"
             ]
         }
     ]
